@@ -175,9 +175,12 @@ class ReportBuilder:
                 expected_points = [str(expected_points)]
             expected_points = [str(p) for p in expected_points]
 
+            skill_name = str(q.get("skill_name") or q.get("skill") or "Python")
+
             viva_questions.append(
                 VivaQuestion(
                     id=q_id,
+                    skill_name=skill_name,
                     question=str(q.get("question", "")),
                     type=qtype,
                     difficulty=diff,

@@ -21,6 +21,16 @@ class SafeExtractor:
         except Exception:
             return False
 
+    @staticmethod
+    def is_library_file(filename: str) -> bool:
+        """
+        Detects if a path belongs to library files (e.g. node_modules, venv) to exclude them.
+        """
+        normalized = filename.replace('\\', '/')
+        parts = normalized.lower().split('/')
+        library_dirs = {'node_modules', 'venv', '.venv', 'env', '__pycache__', 'dist', 'build', '.git', '.github'}
+        return any(p in library_dirs for p in parts)
+
     @classmethod
     def extract_zip(cls, zip_path: Path, target_dir: Path) -> List[Path]:
         """
@@ -41,6 +51,9 @@ class SafeExtractor:
         
         with zipfile.ZipFile(zip_path, 'r') as zip_ref:
             for member in zip_ref.infolist():
+                if cls.is_library_file(member.filename):
+                    continue
+                
                 # Formulate target path
                 target_file_path = (resolved_target_dir / member.filename).resolve()
                 

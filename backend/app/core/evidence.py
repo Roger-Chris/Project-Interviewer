@@ -21,8 +21,14 @@ class EvidenceEngine:
         file_snippets: Dict[str, str] = {}
         critical_extensions = ['.py', '.js', '.jsx', '.ts', '.tsx', '.yml', '.yaml', '.json', '.md']
 
+        total_snippet_chars = 0
+        MAX_SNIPPET_CHARS = 1500 # Limit to ~600 tokens to fit 4096 context window
+
         # Extract file structural content
         for relative_path_str in scan_results.get("files_list", []):
+            if total_snippet_chars >= MAX_SNIPPET_CHARS:
+                break
+                
             path = resolved_root / relative_path_str
             if not path.is_file():
                 continue
@@ -33,16 +39,21 @@ class EvidenceEngine:
             if ext in critical_extensions or path.name.lower() == 'dockerfile':
                 try:
                     file_size = path.stat().st_size
+                    content = ""
                     
                     if file_size <= cls.MAX_FILE_SIZE_FULL:
                         # File is small, load completely
                         with open(path, 'r', encoding='utf-8', errors='ignore') as f:
-                            file_snippets[relative_path_str] = f.read()
+                            content = f.read()
                     else:
                         # File is large, extract only header and imports (first 40 lines)
                         with open(path, 'r', encoding='utf-8', errors='ignore') as f:
                             lines = [next(f) for _ in range(cls.MAX_LARGE_FILE_LINES)]
-                            file_snippets[relative_path_str] = "".join(lines) + "\n\n... [Content Truncated by Evidence Engine] ..."
+                            content = "".join(lines) + "\n\n... [Content Truncated] ..."
+                    
+                    if content:
+                        file_snippets[relative_path_str] = content
+                        total_snippet_chars += len(content)
                 except Exception:
                     pass
 

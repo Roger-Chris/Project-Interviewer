@@ -3,10 +3,10 @@ import { useProject } from '../../contexts/ProjectContext';
 import ZipUpload from '../../components/upload/ZipUpload';
 import AdvancedSettings from '../../components/upload/AdvancedSettings';
 import Card from '../../components/common/Card';
-import { ArrowRight, Sparkles } from 'lucide-react';
+import { ArrowRight, Sparkles, FileText } from 'lucide-react';
 
 const UploadPage = () => {
-  const { submitProject } = useProject();
+  const { submitProject, llmProvider, setLlmProvider } = useProject();
 
   // Form states
   const [title, setTitle] = useState('');
@@ -19,8 +19,9 @@ const UploadPage = () => {
   const [focusAreas, setFocusAreas] = useState(['Frontend', 'Backend', 'Architecture']);
 
   const [formError, setFormError] = useState('');
+  const [isSuggesting, setIsSuggesting] = useState(false);
 
-  // Preset demo values for quick-fill (nexus-core-migration or neural-network-optimizer)
+  // Preset demo values for quick-fill
   const quickLoadTemplate = (type) => {
     if (type === 'nexus') {
       setTitle('Nexus Core Migration');
@@ -52,6 +53,44 @@ const UploadPage = () => {
     }
   };
 
+  const handleSuggestSkills = async () => {
+    if (!title.trim() || !description.trim()) {
+      setFormError('Please fill in title and description first to suggest skills.');
+      return;
+    }
+    setIsSuggesting(true);
+    setFormError('');
+    try {
+      const outcomesArray = outcomesText
+        .split('\n')
+        .map(line => line.replace(/^[\s\-\*\d\.]+/g, '').trim())
+        .filter(line => line.length > 0);
+
+      const res = await fetch('http://localhost:8000/api/suggest-skills', {
+        method: 'POST',
+        headers: { 
+          'Content-Type': 'application/json',
+          'X-LLM-Provider': llmProvider
+        },
+        body: JSON.stringify({
+          title: title.trim(),
+          description: description.trim(),
+          outcomes: outcomesArray.length > 0 ? outcomesArray : ['Implemented project functionalities']
+        })
+      });
+      if (!res.ok) throw new Error('Skill suggester offline');
+      const data = await res.json();
+      const newSkills = data.suggested_skills.map(s => s.name);
+      setFocusAreas(prev => Array.from(new Set([...prev, ...newSkills])));
+    } catch (e) {
+      setFormError('Failed to fetch skill suggestions. Server may be offline.');
+    } finally {
+      setIsSuggesting(false);
+    }
+  };
+
+
+
   const handleStartAnalysis = (e) => {
     e.preventDefault();
 
@@ -70,7 +109,6 @@ const UploadPage = () => {
 
     setFormError('');
 
-    // Parse outcomes line-by-line, stripping hyphens/stars/numbers
     const outcomesArray = outcomesText
       .split('\n')
       .map(line => line.replace(/^[\s\-\*\d\.]+/g, '').trim())
@@ -87,9 +125,9 @@ const UploadPage = () => {
   };
 
   return (
-    <div className="w-full flex flex-col items-center justify-center py-6 select-none max-w-3xl mx-auto">
+    <div className="w-full flex flex-col items-center justify-center py-6 select-none max-w-3xl mx-auto space-y-8">
       {/* Title Header Section */}
-      <div className="text-center mb-10">
+      <div className="text-center">
         <h1 className="text-4xl md:text-5xl font-extrabold font-sans text-white tracking-tight leading-tight mb-3">
           Initialize Analysis
         </h1>
@@ -99,7 +137,7 @@ const UploadPage = () => {
       </div>
 
       {/* Quick Fill Widget */}
-      <div className="w-full mb-6 flex flex-col sm:flex-row items-center justify-between gap-3 bg-dark-900/60 p-4 border border-dark-600/35 rounded-xl text-xs">
+      <div className="w-full flex flex-col sm:flex-row items-center justify-between gap-3 bg-dark-900/60 p-4 border border-dark-600/35 rounded-xl text-xs">
         <div className="flex items-center gap-2">
           <Sparkles className="w-4 h-4 text-brand-400 animate-pulse" />
           <span className="text-dark-200 font-medium">Quick Test: Populate form with sample repository templates</span>
@@ -125,6 +163,37 @@ const UploadPage = () => {
       {/* Main Input Form */}
       <Card className="w-full flex flex-col gap-6 shadow-2xl relative" glow>
         <form onSubmit={handleStartAnalysis} className="flex flex-col gap-5 select-text">
+          {/* LLM Engine Selection Toggle */}
+          <div className="flex flex-col gap-2">
+            <label className="text-xs font-bold text-dark-400 tracking-widest uppercase select-none">
+              LLM Processing Engine
+            </label>
+            <div className="grid grid-cols-2 p-1 bg-dark-950 border border-dark-600 rounded-xl">
+              <button
+                type="button"
+                onClick={() => setLlmProvider('local')}
+                className={`py-2 text-xs font-bold rounded-lg transition-all duration-300 ${
+                  llmProvider === 'local'
+                    ? 'bg-brand-500 text-white shadow-lg'
+                    : 'text-dark-400 hover:text-white'
+                }`}
+              >
+                Local Qwen (LM Studio)
+              </button>
+              <button
+                type="button"
+                onClick={() => setLlmProvider('gemini')}
+                className={`py-2 text-xs font-bold rounded-lg transition-all duration-300 ${
+                  llmProvider === 'gemini'
+                    ? 'bg-brand-500 text-white shadow-lg'
+                    : 'text-dark-400 hover:text-white'
+                }`}
+              >
+                Cloud Gemini API
+              </button>
+            </div>
+          </div>
+
           {/* Project Title */}
           <div className="flex flex-col gap-2">
             <label className="text-xs font-bold text-dark-400 tracking-widest uppercase select-none">
@@ -158,9 +227,14 @@ const UploadPage = () => {
               <label className="text-xs font-bold text-dark-400 tracking-widest uppercase">
                 Project Outcomes
               </label>
-              <span className="text-[10px] font-bold text-dark-400 tracking-wide uppercase">
-                One outcome per line
-              </span>
+              <button
+                type="button"
+                onClick={handleSuggestSkills}
+                disabled={isSuggesting}
+                className="text-[10px] font-bold text-brand-300 hover:text-white uppercase tracking-wider bg-brand-500/10 border border-brand-500/20 rounded-md px-2.5 py-1.5 transition-all active:scale-95 disabled:opacity-50"
+              >
+                {isSuggesting ? 'Suggesting...' : 'Suggest Skill Tags'}
+              </button>
             </div>
             <textarea
               value={outcomesText}
@@ -205,6 +279,8 @@ const UploadPage = () => {
           </div>
         </form>
       </Card>
+
+
 
       {/* Sub-footer banner */}
       <div className="text-center text-[10px] text-dark-400 uppercase tracking-widest mt-6 flex items-center gap-1.5 justify-center">

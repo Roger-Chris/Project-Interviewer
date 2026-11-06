@@ -1,36 +1,16 @@
-Generate a list of targeted viva questions to evaluate a developer's depth of understanding of this codebase.
-
-Project Evidence Map:
-{evidence_map}
-
-Questions Count to Generate:
-{questions_count}
-
-Focus Areas:
-{focus_areas}
-
-You must generate exactly {questions_count} questions. 
-Mix general conceptual questions with codebase-specific questions (referencing specific file paths and line ranges found in the Evidence Map).
-Return a valid JSON array matching this exact structure:
-[
-  {{
-    "id": 1,
-    "question": "Clear question text?",
-    "type": "Codebase Specific",
-    "difficulty": "Medium",
-    "timeLimit": 120,
-    "expectedPoints": [
-      "Key answer point 1",
-      "Key answer point 2"
-    ],
-    "refFile": "src/consumers/emailConsumer.js",
-    "refLines": "12-35",
-    "suspicionText": "Eye movements indicate reading another window. Stuttering or delayed reaction when explaining consumer polling loops."
-  }}
-]
-
-For conceptual questions, set "refFile" to "N/A" and "refLines" to "N/A".
-"type" must be "Conceptual" or "Codebase Specific".
-"difficulty" must be "Easy", "Medium", or "Hard".
-"timeLimit" must be in seconds (e.g. 120, 180, or 240).
-Return ONLY the raw JSON array. Do not add code blocks, markdown wrapper fences, backticks, or any conversational text.
+Generate 1 viva question (Q#{question_number}/3) testing {skill_name} ({question_type}, {difficulty}).
+Evidence Map: {evidence_map}
+Return ONLY a raw JSON object matching this exact template:
+{{
+  "id": {question_number},
+  "question": "question text",
+  "type": "{question_type}",
+  "difficulty": "{difficulty}",
+  "timeLimit": {time_limit},
+  "expectedPoints": ["point 1", "point 2"],
+  "refFile": "N/A",
+  "refLines": "N/A",
+  "suspicionText": "cheat indicator"
+}}
+For conceptual type, set refFile and refLines to 'N/A'.
+Do not write any introductory or conversational text. Use single quotes (') inside string values.

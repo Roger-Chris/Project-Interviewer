@@ -34,6 +34,7 @@ class OutcomeVerification(BaseModel):
 
 class VivaQuestion(BaseModel):
     id: int
+    skill_name: str
     question: str
     type: str # 'Conceptual' | 'Codebase Specific'
     difficulty: str # 'Easy' | 'Medium' | 'Hard'
@@ -53,6 +54,7 @@ class CodeAuditReport(BaseModel):
     recommendations: str
 
 class ProjectAnalysisResponse(BaseModel):
+    session_id: Optional[str] = None
     title: str
     description: str
     files_count: int

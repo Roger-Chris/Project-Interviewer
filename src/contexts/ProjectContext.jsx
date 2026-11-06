@@ -39,6 +39,12 @@ export const ProjectProvider = ({ children }) => {
     }
   }, [navigate]);
 
+  // LLM Provider state ('local' | 'gemini')
+  const [llmProvider, setLlmProvider] = useState('local');
+  const [isGeneratingReport, setIsGeneratingReport] = useState(false);
+  const [sessionId, setSessionId] = useState(null);
+  const [consentRecord, setConsentRecord] = useState(null);
+
   // Stage 1: Upload Details
   const [projectDetails, setProjectDetails] = useState({
     title: '',
@@ -172,6 +178,9 @@ export const ProjectProvider = ({ children }) => {
       // 2. Fetch API Call
       const response = await fetch('http://localhost:8000/api/analyze-submission', {
         method: 'POST',
+        headers: {
+          'X-LLM-Provider': llmProvider
+        },
         body: formData
       });
 
@@ -180,6 +189,7 @@ export const ProjectProvider = ({ children }) => {
       }
 
       const result = await response.json();
+      setSessionId(result.session_id);
       
       // Stop the UI progress interval
       clearInterval(progressTimer);
@@ -324,8 +334,6 @@ export const ProjectProvider = ({ children }) => {
       [questionId]: grade
     }));
 
-    setVivaCompletedCount(prev => prev + 1);
-
     // Calculate score shifts based on grade
     let techShift = 0;
     let commShift = 0;
@@ -360,12 +368,21 @@ export const ProjectProvider = ({ children }) => {
     });
 
     // Handle suspicion flags
-    const currentQuestion = vivaQuestions[currentQuestionIdx];
-    if (grade === 'Fail' && currentQuestion?.suspicionText) {
-      setSuspicionLogs(prev => [...prev, `Question ${currentQuestionIdx + 1}: ${currentQuestion.suspicionText}`]);
-    } else if (grade === 'Partial' && Math.random() > 0.5 && currentQuestion?.suspicionText) {
-      setSuspicionLogs(prev => [...prev, `Question ${currentQuestionIdx + 1}: ${currentQuestion.suspicionText}`]);
+    const questionObj = vivaQuestions.find(q => q.id === questionId);
+    const qIdx = vivaQuestions.findIndex(q => q.id === questionId);
+    if (grade === 'Fail' && questionObj?.suspicionText) {
+      setSuspicionLogs(prev => [...prev, `Question ${qIdx + 1}: ${questionObj.suspicionText}`]);
+    } else if (grade === 'Partial' && Math.random() > 0.5 && questionObj?.suspicionText) {
+      setSuspicionLogs(prev => [...prev, `Question ${qIdx + 1}: ${questionObj.suspicionText}`]);
     }
+  };
+
+  const proceedToNextQuestion = (questionId, answerText) => {
+    // Save draft
+    saveAnswerDraft(questionId, answerText);
+
+    // Increment completed count
+    setVivaCompletedCount(prev => prev + 1);
 
     // Advance to next question
     if (currentQuestionIdx + 1 < vivaQuestions.length) {
@@ -380,7 +397,121 @@ export const ProjectProvider = ({ children }) => {
   };
 
   const skipQuestion = (questionId) => {
-    gradeAnswer(questionId, 'Fail');
+    proceedToNextQuestion(questionId, 'Skipped by candidate.');
+  };
+
+  const evaluateAndProceed = async (questionId, answerText) => {
+    const question = vivaQuestions.find(q => q.id === questionId);
+
+    // Pre-check: if answer is clearly junk/empty, auto-fail without wasting an API call
+    const trimmed = (answerText || '').trim();
+    if (trimmed.length < 15 || /^(test|testing|idk|no|yes|na|n\/a|skip|\.+|x+)$/i.test(trimmed)) {
+      gradeAnswer(questionId, 'Fail');
+      proceedToNextQuestion(questionId, answerText);
+      return;
+    }
+
+    try {
+      const response = await fetch('http://localhost:8000/api/evaluate-answer', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-LLM-Provider': llmProvider
+        },
+        body: JSON.stringify({
+          question: question?.question || '',
+          expectedPoints: question?.expectedPoints || question?.expected_points || [],
+          candidateAnswer: answerText
+        })
+      });
+
+      if (response.ok) {
+        const result = await response.json();
+        // Normalise grade: backend may return Approve / Partial / Fail (any casing)
+        const rawGrade = (result.grade || '').toLowerCase();
+        let grade = 'Partial';
+        if (rawGrade === 'approve' || rawGrade === 'pass' || rawGrade === 'approved') {
+          grade = 'Approve';
+        } else if (rawGrade === 'fail' || rawGrade === 'failed' || rawGrade === 'incorrect') {
+          grade = 'Fail';
+        } else {
+          grade = 'Partial';
+        }
+        gradeAnswer(questionId, grade);
+
+        // Store feedback text for use in report
+        setVivaAnswers(prev => ({
+          ...prev,
+          [`${questionId}_feedback`]: result.feedback || '',
+          [`${questionId}_points_met`]: (result.points_met || []).join(', ')
+        }));
+      } else {
+        // Backend error: grade conservatively based on answer length
+        const wordCount = trimmed.split(/\s+/).length;
+        gradeAnswer(questionId, wordCount >= 30 ? 'Partial' : 'Fail');
+      }
+    } catch (err) {
+      console.error('Evaluation API unreachable, falling back to heuristic grading:', err);
+      // Heuristic fallback: rough grade by word count and keyword presence
+      const wordCount = trimmed.split(/\s+/).length;
+      const techKeywords = question?.expectedPoints?.join(' ').toLowerCase() || '';
+      const answerLower = trimmed.toLowerCase();
+      const keywordMatches = techKeywords.split(' ').filter(w => w.length > 4 && answerLower.includes(w)).length;
+      if (wordCount >= 50 && keywordMatches >= 2) {
+        gradeAnswer(questionId, 'Approve');
+      } else if (wordCount >= 20 || keywordMatches >= 1) {
+        gradeAnswer(questionId, 'Partial');
+      } else {
+        gradeAnswer(questionId, 'Fail');
+      }
+    }
+
+    proceedToNextQuestion(questionId, answerText);
+  };
+
+
+  const logConsentRecord = async (consentDetails) => {
+    try {
+      const payload = {
+        session_id: sessionId || 'default_session',
+        userId: consentDetails.userId || 'default_student',
+        timestamp: consentDetails.timestamp || new Date().toISOString(),
+        permissionsGranted: consentDetails.permissionsGranted || { camera: true, screenShare: true },
+        consentCheckboxChecked: consentDetails.consentCheckboxChecked || true
+      };
+      const response = await fetch('http://localhost:8000/api/log-consent', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      if (response.ok) {
+        console.log('Consent logged successfully to backend');
+      }
+    } catch (err) {
+      console.error('Failed to log consent to backend:', err);
+    }
+    setConsentRecord(consentDetails);
+  };
+
+  const logSuspicion = async (reason, type = 'Behavior anomaly', confidence = null) => {
+    const timestamp = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    setSuspicionLogs(prev => [...prev, `[CHEAT DETECTED] [${timestamp}] ${reason}`]);
+
+    try {
+      await fetch('http://localhost:8000/api/log-proctor-event', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          session_id: sessionId || 'default_session',
+          timestamp: timestamp,
+          type: type,
+          confidence: confidence,
+          details: reason
+        })
+      });
+    } catch (err) {
+      console.error('Failed to log proctor event to backend:', err);
+    }
   };
 
   // Stage Navigation helpers
@@ -391,7 +522,51 @@ export const ProjectProvider = ({ children }) => {
     }
   };
 
-  const generateReport = () => {
+  const generateReport = async () => {
+    setIsGeneratingReport(true);
+
+    for (let i = 0; i < vivaQuestions.length; i++) {
+      const question = vivaQuestions[i];
+      const answer = vivaAnswers[question.id] || '';
+
+      if (!answer.trim() || answer === 'Skipped by candidate.') {
+        gradeAnswer(question.id, 'Fail');
+        continue;
+      }
+
+      try {
+        const response = await fetch('http://localhost:8000/api/evaluate-answer', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-LLM-Provider': llmProvider
+          },
+          body: JSON.stringify({
+            question: question.question,
+            expectedPoints: question.expectedPoints,
+            candidateAnswer: answer
+          })
+        });
+
+        if (response.ok) {
+          const data = await response.json();
+          let finalGrade = 'Partial';
+          if (data.grade && (data.grade.toLowerCase().includes('pass') || data.grade.toLowerCase().includes('approve') || data.grade.toLowerCase().includes('good') || data.grade.toLowerCase().includes('correct'))) {
+            finalGrade = 'Approve';
+          } else if (data.grade && data.grade.toLowerCase().includes('fail')) {
+            finalGrade = 'Fail';
+          }
+          gradeAnswer(question.id, finalGrade);
+        } else {
+          gradeAnswer(question.id, 'Partial');
+        }
+      } catch (err) {
+        console.error(`Evaluation failed for question ${question.id}:`, err);
+        gradeAnswer(question.id, 'Partial');
+      }
+    }
+
+    setIsGeneratingReport(false);
     setCurrentStage(4);
   };
 
@@ -448,6 +623,12 @@ export const ProjectProvider = ({ children }) => {
       setCurrentStage,
       projectDetails,
       submitProject,
+      llmProvider,
+      setLlmProvider,
+      isGeneratingReport,
+      sessionId,
+      consentRecord,
+      logConsentRecord,
       
       // Stage 2
       analysisProgress,
@@ -473,6 +654,8 @@ export const ProjectProvider = ({ children }) => {
       revealExpected,
       gradeAnswer,
       skipQuestion,
+      evaluateAndProceed,
+      logSuspicion,
       generateReport,
       
       // Stage 4

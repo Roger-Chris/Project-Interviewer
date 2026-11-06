@@ -28,7 +28,8 @@ class AnalysisService:
         outcomes: List[str],
         questions_count: int,
         focus_areas: List[str],
-        extract_path: Path
+        extract_path: Path,
+        provider: str = "local"
     ) -> ProjectAnalysisResponse:
         # 1. Scan codebase tree
         scan_results = CodebaseScanner.scan_project(extract_path)
@@ -43,8 +44,10 @@ class AnalysisService:
         loaded_models = await AIService.get_loaded_models()
 
         # Resolve models for task execution
-        phi_model = TaskRouter.get_model_for_task("skills", loaded_models)
-        gemma_model = TaskRouter.get_model_for_task("architecture", loaded_models)
+        qwen_model = TaskRouter.get_model_for_task("skills", loaded_models)
+        # Using the same qwen model for architecture as requested
+        # We can map it directly from loaded models as well if it's there
+        # For now, just assigning qwen_model to what was phi_model and gemma_model
 
         # Define dynamic high-fidelity fallback datasets
         is_neural = "torch" in str(evidence_map).lower() or "neural" in title.lower() or "attention" in description.lower()
@@ -83,6 +86,7 @@ class AnalysisService:
             "viva_questions": [
                 {
                   "id": 1,
+                  "skill_name": "PyTorch",
                   "question": "Describe the mathematical formulation of your custom attention mechanism, and why it cuts down visual latency.",
                   "type": "Conceptual",
                   "difficulty": "Hard",
@@ -99,6 +103,7 @@ class AnalysisService:
                 },
                 {
                   "id": 2,
+                  "skill_name": "PyTorch",
                   "question": "Why did you use PyTorch raw tensor manipulation rather than pre-built nn.MultiheadAttention modules?",
                   "type": "Codebase Specific",
                   "difficulty": "Medium",
@@ -114,6 +119,7 @@ class AnalysisService:
                 },
                 {
                   "id": 3,
+                  "skill_name": "PyTorch",
                   "question": "How do you prevent CUDA out-of-memory errors during evaluation runs with large batch sizes?",
                   "type": "Codebase Specific",
                   "difficulty": "Medium",
@@ -130,6 +136,7 @@ class AnalysisService:
             ] if is_neural else [
                 {
                   "id": 1,
+                  "skill_name": "Kafka",
                   "question": "Explain the specific architectural decisions behind using an Event-Driven approach for the notification microservice, rather than REST?",
                   "type": "Conceptual",
                   "difficulty": "Hard",
@@ -146,6 +153,7 @@ class AnalysisService:
                 },
                 {
                   "id": 2,
+                  "skill_name": "Kafka",
                   "question": "In emailConsumer.js, how do you handle backpressure if the email SMTP provider starts rate-limiting your requests?",
                   "type": "Codebase Specific",
                   "difficulty": "Medium",
@@ -162,6 +170,7 @@ class AnalysisService:
                 },
                 {
                   "id": 3,
+                  "skill_name": "Kafka",
                   "question": "What mechanism ensures that messages are distributed evenly across your Kafka partitions, and why is order important here?",
                   "type": "Conceptual",
                   "difficulty": "Hard",
@@ -241,42 +250,53 @@ class AnalysisService:
         phi_outputs = {}
         gemma_outputs = {}
 
-        # 5a. Execute Phi-3 tasks
-        if phi_model:
+        # 5a. Execute tasks
+        if qwen_model:
             async def run_skills():
                 try:
-                    return await LLMService.detect_skills(phi_model, evidence_map, skill_catalog)
+                    return await LLMService.detect_skills(qwen_model, evidence_map, skill_catalog, provider=provider)
                 except Exception as err:
                     print(f"[Warning] Real detect_skills failed: {err}")
                     return fallback_phi["skills"]
 
             async def run_outcomes():
                 try:
-                    return await LLMService.verify_outcomes(phi_model, evidence_map, outcomes)
+                    return await LLMService.verify_outcomes(qwen_model, evidence_map, outcomes, provider=provider)
                 except Exception as err:
                     print(f"[Warning] Real verify_outcomes failed: {err}")
                     return fallback_phi["outcomes"]
 
-            async def run_viva():
+            async def run_viva(detected_skills):
+                all_viva_questions = []
                 try:
-                    viva_questions = await LLMService.generate_viva_questions(
-                        phi_model, evidence_map, questions_count, focus_areas
-                    )
-                    if not viva_questions:
+                    # Sort skills by confidence descending and take top 3 to keep response time reasonable
+                    sorted_skills = sorted(detected_skills, key=lambda s: s.get("confidence", 0), reverse=True)
+                    top_skills = sorted_skills[:3]
+                    for skill in top_skills:
+                        skill_name = skill.get("skill_name")
+                        if skill_name:
+                            viva_questions = await LLMService.generate_viva_questions(
+                                qwen_model, evidence_map, skill_name, provider=provider
+                            )
+                            if viva_questions:
+                                all_viva_questions.extend(viva_questions)
+                    if not all_viva_questions:
                         raise ValueError("Empty viva questions from LLM")
-                    return viva_questions
+                    return all_viva_questions[:questions_count]
                 except Exception as err:
                     print(f"[Warning] Real generate_viva_questions failed: {err}")
-                    return fallback_phi["viva_questions"][:questions_count]
+                    # Fallback fallback
+                    return fallback_phi["viva_questions"]
 
             if settings.CONCURRENT_LLM_INFERENCE:
-                skills_res, outcomes_res, viva_res = await asyncio.gather(
-                    run_skills(), run_outcomes(), run_viva()
+                skills_res, outcomes_res = await asyncio.gather(
+                    run_skills(), run_outcomes()
                 )
+                viva_res = await run_viva(skills_res)
             else:
                 skills_res = await run_skills()
                 outcomes_res = await run_outcomes()
-                viva_res = await run_viva()
+                viva_res = await run_viva(skills_res)
 
             phi_outputs = {
                 "skills": skills_res,
@@ -290,12 +310,12 @@ class AnalysisService:
                 "viva_questions": fallback_phi["viva_questions"][:questions_count]
             }
 
-        # 5b. Execute Gemma-3 tasks
-        if gemma_model:
+        # 5b. Execute Gemma-3 tasks (now using qwen)
+        if qwen_model:
             async def run_arch():
                 try:
                     return await LLMService.review_architecture(
-                        gemma_model, evidence_map, scan_results.get("dependencies", [])
+                        qwen_model, evidence_map, scan_results.get("dependencies", []), provider=provider
                     )
                 except Exception as err:
                     print(f"[Warning] Real review_architecture failed: {err}")
@@ -303,7 +323,7 @@ class AnalysisService:
 
             async def run_audit():
                 try:
-                    return await LLMService.run_code_audit(gemma_model, evidence_map)
+                    return await LLMService.run_code_audit(qwen_model, evidence_map, provider=provider)
                 except Exception as err:
                     print(f"[Warning] Real run_code_audit failed: {err}")
                     return fallback_gemma["audit_report"]
@@ -311,13 +331,14 @@ class AnalysisService:
             async def run_auth_explain():
                 try:
                     return await LLMService.explain_authenticity(
-                        gemma_model,
+                        qwen_model,
                         evidence_map,
                         auth_results.get("score", 0),
                         auth_results.get("classification", "Superficial"),
                         auth_results.get("category_scores", {}),
                         auth_results.get("missing_indicators", []),
-                        auth_results.get("real_indicators", [])
+                        auth_results.get("real_indicators", []),
+                        provider=provider
                     )
                 except Exception as err:
                     print(f"[Warning] Real explain_authenticity failed: {err}")

@@ -1,6 +1,7 @@
 import React from 'react';
 import Header from './Header';
 import Footer from './Footer';
+import ChatWidget from '../common/ChatWidget';
 
 const MainLayout = ({ children }) => {
   return (
@@ -19,6 +20,9 @@ const MainLayout = ({ children }) => {
 
       {/* Main Footer */}
       <Footer />
+
+      {/* SkillForge Floating Chat Widget */}
+      <ChatWidget />
     </div>
   );
 };

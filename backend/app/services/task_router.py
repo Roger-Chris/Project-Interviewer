@@ -8,28 +8,30 @@ class TaskRouter:
     """
 
     TASK_MODEL_MAP = {
-        "skills": "phi",
-        "outcomes": "phi",
-        "viva": "phi",
-        "viva_evaluation": "phi",
-        "summary": "phi",
-        "architecture": "gemma",
-        "security": "gemma",
-        "maintainability": "gemma",
-        "technical_debt": "gemma",
-        "authenticity_explanation": "gemma"
+        "skills": "qwen",
+        "outcomes": "qwen",
+        "viva": "qwen",
+        "viva_evaluation": "qwen",
+        "summary": "qwen",
+        "architecture": "qwen",
+        "security": "qwen",
+        "maintainability": "qwen",
+        "technical_debt": "qwen",
+        "authenticity_explanation": "qwen"
     }
 
     @classmethod
     def resolve_model_alias(cls, alias: str, loaded_models: List[str]) -> Optional[str]:
         """
-        Maps a task model alias ('phi' or 'gemma') to a loaded model in LM Studio.
+        Maps a task model alias ('qwen') to a loaded model in LM Studio.
         First tries an exact match, then a substring case-insensitive search.
         """
         if not loaded_models:
             return None
 
-        expected_name = settings.PHI_MODEL if alias == "phi" else settings.GEMMA_MODEL
+        # Determine the expected name based on alias, assuming we just use one model for all tasks
+        # Can fallback to any loaded qwen model if alias is 'qwen'
+        expected_name = settings.PHI_MODEL # In config we've set this to qwen3.5-9b
         
         # 1. Exact match
         if expected_name in loaded_models:
@@ -37,7 +39,7 @@ class TaskRouter:
 
         # 2. Case-insensitive substring match
         for model in loaded_models:
-            if alias in model.lower():
+            if alias in model.lower() or "qwen" in model.lower():
                 return model
 
         return None

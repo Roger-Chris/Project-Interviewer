@@ -49,20 +49,27 @@ const OutcomeVerificationTable = ({ outcomes = [], selectedTemplate }) => {
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 select-text text-left">
         {records.map((record, index) => {
-          const Icon = record.icon || (record.status === 'MET' ? User : record.status === 'PARTIAL' ? FlaskConical : AlertTriangle);
+          const status = (record.status || '').toUpperCase();
+          const Icon = record.icon || (status === 'MET' ? User : status === 'PARTIAL' ? FlaskConical : AlertTriangle);
           
           let badgeColor = '';
           let borderColor = '';
-          if (record.status === 'MET') {
+          if (status === 'MET') {
             badgeColor = 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20';
             borderColor = 'border-dark-600/35 hover:border-emerald-500/30';
-          } else if (record.status === 'PARTIAL') {
+          } else if (status === 'PARTIAL') {
             badgeColor = 'text-cyan-400 bg-cyan-500/10 border-cyan-500/20';
             borderColor = 'border-dark-600/35 hover:border-cyan-500/30';
           } else {
             badgeColor = 'text-rose-400 bg-rose-500/10 border-rose-500/20';
             borderColor = 'border-dark-600/35 hover:border-rose-500/30';
           }
+
+          const evidenceArray = Array.isArray(record.evidence)
+            ? record.evidence
+            : typeof record.evidence === 'string' && record.evidence.trim()
+              ? [record.evidence]
+              : [];
 
           return (
             <div 
@@ -74,31 +81,31 @@ const OutcomeVerificationTable = ({ outcomes = [], selectedTemplate }) => {
                 <div className="flex justify-between items-start">
                   <div className="flex flex-col gap-1 text-left">
                     <span className={`px-2.5 py-0.5 rounded text-[10px] font-extrabold border ${badgeColor} inline-block w-max tracking-widest`}>
-                      {record.status}
+                      {status}
                     </span>
                     <span className="text-[8px] font-bold text-dark-400 tracking-wider uppercase">
-                      {record.subtext}
+                      {record.subtext || (status === 'MET' ? 'VIVA VERIFIED: HIGH CONFIDENCE' : status === 'PARTIAL' ? 'VIVA VERIFIED: MODERATE RISK' : 'VIVA CONFIRMED: GAP EXISTS')}
                     </span>
                   </div>
                   <Icon className="w-5 h-5 text-dark-400" />
                 </div>
-
+ 
                 {/* Title and description */}
                 <div className="text-left mt-2">
                   <h4 className="text-sm font-bold text-white font-sans leading-tight">
                     {record.outcome}
                   </h4>
                   <p className="text-xs text-dark-300 mt-2 leading-relaxed font-sans">
-                    {record.description}
+                    {record.description || (status === 'MET' ? 'Outcome verified successfully in scanned repositories.' : status === 'PARTIAL' ? 'Basic execution is configured, but complete validation tests are missing.' : 'The repository contains no files matching this requirement.')}
                   </p>
                 </div>
               </div>
-
+ 
               {/* Code Evidence or Gap Container */}
               <div className="flex flex-col gap-2 mt-2">
-                {record.status !== 'MISSING' && record.evidence && record.evidence.length > 0 && (
+                {status !== 'MISSING' && evidenceArray.length > 0 && (
                   <div className="flex flex-col gap-1.5">
-                    {record.evidence.map((file, fIdx) => (
+                    {evidenceArray.map((file, fIdx) => (
                       <div 
                         key={fIdx} 
                         className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-dark-950 border border-dark-600/20 text-[10px] font-mono text-dark-300 hover:text-white transition cursor-pointer select-all"
@@ -109,7 +116,7 @@ const OutcomeVerificationTable = ({ outcomes = [], selectedTemplate }) => {
                     ))}
                   </div>
                 )}
-
+ 
                 {record.gap && (
                   <div className="px-3 py-2.5 rounded-lg bg-rose-500/5 border border-rose-500/10 text-[10px] font-sans text-dark-300 leading-normal text-left">
                     <span className="font-bold text-rose-400 block mb-0.5 uppercase tracking-wider">Gap:</span>

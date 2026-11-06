@@ -2,6 +2,7 @@ import React, { useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route, useNavigate, useLocation } from 'react-router-dom';
 import { ProjectProvider, useProject } from './contexts/ProjectContext';
 import MainLayout from './components/layout/MainLayout';
+import ErrorBoundary from './components/common/ErrorBoundary';
 import UploadPage from './pages/Upload/UploadPage';
 import AnalysisPage from './pages/Analysis/AnalysisPage';
 import VivaPage from './pages/Viva/VivaPage';
@@ -60,11 +61,13 @@ const AppContent = () => {
 
 function App() {
   return (
-    <Router>
-      <ProjectProvider>
-        <AppContent />
-      </ProjectProvider>
-    </Router>
+    <ErrorBoundary>
+      <Router>
+        <ProjectProvider>
+          <AppContent />
+        </ProjectProvider>
+      </Router>
+    </ErrorBoundary>
   );
 }
 

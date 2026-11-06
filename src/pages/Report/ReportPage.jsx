@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { useProject } from '../../contexts/ProjectContext';
 import Card from '../../components/common/Card';
 import OutcomeVerificationTable from '../../components/report/OutcomeVerificationTable';
@@ -29,8 +29,28 @@ const ReportPage = () => {
     vivaScores,
     getOverallPerformanceMetrics,
     resetApp,
-    suspicionLogs
+    suspicionLogs,
+    sessionId,
+    consentRecord
   } = useProject();
+
+  const [proctorData, setProctorData] = useState(null);
+
+  useEffect(() => {
+    const fetchProctorReport = async () => {
+      if (!sessionId) return;
+      try {
+        const response = await fetch(`http://localhost:8000/api/get-proctor-report/${sessionId}`);
+        if (response.ok) {
+          const data = await response.json();
+          setProctorData(data);
+        }
+      } catch (err) {
+        console.error('Failed to load proctor report:', err);
+      }
+    };
+    fetchProctorReport();
+  }, [sessionId]);
 
   const metrics = getOverallPerformanceMetrics();
 
@@ -67,7 +87,11 @@ const ReportPage = () => {
         answer: vivaAnswers[q.id] || 'Not answered',
         grade: vivaGrades[q.id] || 'Skipped'
       })),
-      audit: selectedProjectTemplate.audit
+      audit: selectedProjectTemplate.audit,
+      proctoring: proctorData || {
+        consent: consentRecord,
+        events: suspicionLogs.map(l => ({ timestamp: 'N/A', details: l, type: 'Event log' }))
+      }
     };
 
     const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(reportData, null, 2));
@@ -79,10 +103,48 @@ const ReportPage = () => {
     downloadAnchor.remove();
   };
 
-  // Trigger Print dialog
+  // Export full report as markdown
   const downloadReport = () => {
-    window.print();
+    const lines = [
+      `# AI Proctored Submission Analysis`,
+      `**Project:** ${projectDetails.title}`,
+      `**Date:** ${new Date().toLocaleString()}`,
+      ``,
+      `## Evaluation Summary`,
+      `- Overall Score: ${metrics.overallScore}%`,
+      `- Authenticity: ${metrics.authenticityScore}%`,
+      `- Viva Score: ${metrics.vivaScore}%`,
+      `- Verdict: ${metrics.classification}`,
+      ``,
+      `## Viva Transcript`,
+      ...vivaQuestions.map((q, i) =>
+        `### Q${i+1}: ${q.question}\n**Answer:** ${vivaAnswers[q.id] || 'No response'}\n**Grade:** ${vivaGrades[q.id] || 'Skipped'}`
+      ),
+      ``,
+      `## Proctoring`,
+      `Consent: ${consentRecord ? 'Granted' : 'Not recorded'}`,
+      `Suspicion events: ${suspicionLogs.length}`
+    ];
+    const blob = new Blob([lines.join('\n')], { type: 'text/markdown' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `AIPSA_Report_${projectDetails.title.replace(/\s+/g, '_')}.md`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
   };
+
+  const groupedEvents = {};
+  const events = proctorData?.events || [];
+  events.forEach(evt => {
+    const type = evt.type || 'Other anomaly';
+    if (!groupedEvents[type]) {
+      groupedEvents[type] = [];
+    }
+    groupedEvents[type].push(evt);
+  });
 
   return (
     <div className="w-full flex flex-col gap-8 py-6 max-w-7xl mx-auto select-none print:bg-white print:text-black">
@@ -94,9 +156,9 @@ const ReportPage = () => {
             Analysis Complete
           </h1>
           <div className="flex items-center gap-4 text-xs text-dark-400 mt-2 flex-wrap print:text-black">
-            <span className="flex items-center gap-1.5"><FolderGit className="w-3.5 h-3.5 text-brand-400" /> {projectDetails.zipFile?.name || "nexus_core_migration_v2.1.zip"}</span>
-            <span className="flex items-center gap-1.5"><Clock className="w-3.5 h-3.5 text-brand-400" /> 1m 24s</span>
-            <span className="flex items-center gap-1.5"><Binary className="w-3.5 h-3.5 text-brand-400" /> 142k tokens</span>
+            <span className="flex items-center gap-1.5"><FolderGit className="w-3.5 h-3.5 text-brand-400" /> {projectDetails.zipFile?.name || selectedProjectTemplate?.title || 'Project'}</span>
+            <span className="flex items-center gap-1.5"><Clock className="w-3.5 h-3.5 text-brand-400" /> {consentRecord?.timestamp ? new Date(consentRecord.timestamp).toLocaleString() : 'Session completed'}</span>
+            <span className="flex items-center gap-1.5"><Binary className="w-3.5 h-3.5 text-brand-400" /> Session ID: {sessionId || 'N/A'}</span>
           </div>
         </div>
         
@@ -216,12 +278,15 @@ const ReportPage = () => {
             Notable Strengths
           </h3>
           <ul className="flex flex-col gap-3.5 text-xs text-dark-200 pl-1 font-sans">
-            {selectedProjectTemplate.audit.strengths.map((str, idx) => (
-              <li key={idx} className="flex gap-2 items-start leading-relaxed">
-                <span className="text-emerald-400 font-bold">✓</span>
-                <span>{str}</span>
-              </li>
-            ))}
+            {(selectedProjectTemplate.audit?.strengths || []).length > 0
+              ? selectedProjectTemplate.audit.strengths.map((str, idx) => (
+                  <li key={idx} className="flex gap-2 items-start leading-relaxed">
+                    <span className="text-emerald-400 font-bold">✓</span>
+                    <span>{str}</span>
+                  </li>
+                ))
+              : <li className="text-dark-400 italic">No notable strengths recorded.</li>
+            }
           </ul>
         </Card>
 
@@ -232,12 +297,15 @@ const ReportPage = () => {
             Critical Gaps
           </h3>
           <ul className="flex flex-col gap-3.5 text-xs text-dark-200 pl-1 font-sans">
-            {selectedProjectTemplate.audit.weaknesses.map((weak, idx) => (
-              <li key={idx} className="flex gap-2 items-start leading-relaxed">
-                <span className="text-rose-400 font-bold font-mono">✗</span>
-                <span>{weak}</span>
-              </li>
-            ))}
+            {(selectedProjectTemplate.audit?.weaknesses || []).length > 0
+              ? selectedProjectTemplate.audit.weaknesses.map((weak, idx) => (
+                  <li key={idx} className="flex gap-2 items-start leading-relaxed">
+                    <span className="text-rose-400 font-bold font-mono">✗</span>
+                    <span>{weak}</span>
+                  </li>
+                ))
+              : <li className="text-dark-400 italic">No critical gaps recorded.</li>
+            }
           </ul>
         </Card>
       </div>
@@ -395,6 +463,76 @@ const ReportPage = () => {
           </div>
         </div>
       </div>
+
+      {/* 7. Proctoring Integrity Report */}
+      <Card className="p-6 border-l-2 border-l-brand-500/50 text-left select-text" glow>
+        <div className="border-b border-dark-600/20 pb-4 mb-5 select-none">
+          <h3 className="text-xl font-bold text-white font-sans flex items-center gap-2">
+            <ShieldCheck className="w-5.5 h-5.5 text-brand-400" />
+            AI Proctoring & Exam Integrity Report
+          </h3>
+          <p className="text-xs text-dark-300 mt-1">
+            Validating candidate identity and monitoring activity for compliance and exam guidelines.
+          </p>
+        </div>
+
+        {/* Consent Record Banner */}
+        <div className="bg-dark-900 border border-dark-600/35 rounded-2xl p-5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-6 select-none">
+          <div className="flex flex-col gap-1">
+            <span className="text-[10px] font-bold text-brand-300 uppercase tracking-widest">Legal Monitor Agreement</span>
+            <div className="flex items-center gap-2 mt-1">
+              <span className="px-2.5 py-0.5 rounded text-[10px] font-bold bg-green-500/10 text-emerald-400 border border-green-500/20 uppercase tracking-wider">
+                Consent Granted
+              </span>
+              <span className="text-xs text-dark-200 font-medium">
+                Student ID: <span className="text-white font-semibold">{consentRecord?.userId || proctorData?.consent?.userId || 'default_student'}</span>
+              </span>
+            </div>
+            <span className="text-[10px] text-dark-400 mt-0.5">
+              Timestamp: {consentRecord?.timestamp || proctorData?.consent?.timestamp ? new Date(consentRecord?.timestamp || proctorData?.consent?.timestamp).toLocaleString() : 'N/A'}
+            </span>
+          </div>
+          <div className="text-right shrink-0">
+            <span className="text-[10px] text-dark-300 block">Monitored streams captured:</span>
+            <span className="text-xs font-semibold text-brand-300 mt-0.5 block">webcam_stream, desktop_canvas, browser_focus</span>
+          </div>
+        </div>
+
+        {/* Grouped Telemetry Violations List */}
+        <div className="flex flex-col gap-4 font-sans">
+          <h4 className="text-xs font-bold text-dark-400 uppercase tracking-widest select-none">integrity telemetry violations</h4>
+          
+          {Object.keys(groupedEvents).length === 0 ? (
+            <div className="p-4 bg-emerald-500/5 border border-emerald-500/15 rounded-xl text-xs text-emerald-400 text-center select-none font-semibold">
+              ✅ Compliance verification complete: No behavioral deviations detected.
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {Object.entries(groupedEvents).map(([type, eventsList]) => (
+                <div key={type} className="p-4 bg-dark-900 border border-dark-600/20 rounded-xl flex flex-col gap-2.5">
+                  <div className="flex items-center justify-between border-b border-dark-800 pb-1.5 select-none">
+                    <span className="text-xs font-bold text-white uppercase tracking-wide flex items-center gap-1.5">
+                      <span className="w-1.5 h-1.5 rounded-full bg-red-500" />
+                      {type}
+                    </span>
+                    <span className="px-2 py-0.5 bg-red-500/10 border border-red-500/20 text-red-400 text-[10px] font-bold rounded">
+                      {eventsList.length} occurrence{eventsList.length > 1 ? 's' : ''}
+                    </span>
+                  </div>
+                  <div className="flex flex-col gap-1.5 max-h-28 overflow-y-auto pr-1">
+                    {eventsList.map((evt, idx) => (
+                      <div key={idx} className="flex items-center justify-between text-[10px] bg-dark-950 p-2 rounded border border-dark-800/40">
+                        <span className="text-dark-300 leading-normal">{evt.details}</span>
+                        <span className="text-dark-500 font-mono shrink-0 ml-3">{evt.timestamp}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </Card>
 
     </div>
   );
